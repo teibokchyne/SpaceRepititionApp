@@ -30,6 +30,18 @@ def init_db():
             )
         ''')
 
+        # Create spaced repetition practice table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS spaced_repetition (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject TEXT NOT NULL,
+                topic TEXT NOT NULL,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         conn.commit()
         conn.close()
         print(f"Database initialized at {DATABASE_PATH}")

@@ -1,6 +1,7 @@
 from flask import Flask, request, redirect
 from database import init_db, get_db_connection
 from datetime import datetime
+import markdown
 
 app = Flask(__name__)
 
@@ -65,9 +66,9 @@ def home():
     total_notes = conn.execute(query_count).fetchone()['count']
 
     # Get paginated notes with sort order
-    # Sort by date first, then by stars (descending) within the same day
+    # Sort by date first, then by stars (ascending) within the same day
     order_direction = 'DESC' if sort_order == 'desc' else 'ASC'
-    query += f' ORDER BY DATE(date) {order_direction}, stars DESC LIMIT ? OFFSET ?'
+    query += f' ORDER BY DATE(date) {order_direction}, stars ASC LIMIT ? OFFSET ?'
     notes = conn.execute(query, (notes_per_page, offset)).fetchall()
     conn.close()
 
@@ -128,6 +129,15 @@ def home():
     else:
         notes_html = '<p>No notes yet.</p>'
 
+    navbar = '''
+        <nav style="background-color: #333; padding: 0; margin: 0; position: sticky; top: 0; z-index: 1000;">
+            <ul style="list-style: none; margin: 0; padding: 0; display: flex;">
+                <li style="margin: 0;"><a href="/" style="display: block; padding: 15px 20px; color: white; text-decoration: none; background-color: #333; transition: background-color 0.3s;">Home</a></li>
+                <li style="margin: 0;"><a href="/practice" style="display: block; padding: 15px 20px; color: white; text-decoration: none; background-color: #333; transition: background-color 0.3s;">Spaced Repetition</a></li>
+            </ul>
+        </nav>
+    '''
+
     return f'''
     <!DOCTYPE html>
     <html>
@@ -139,6 +149,9 @@ def home():
                 max-width: 900px;
                 margin: 0 auto;
                 padding: 20px;
+            }}
+            nav ul li a:hover {{
+                background-color: #555 !important;
             }}
             textarea {{
                 width: 100%;
@@ -183,6 +196,7 @@ def home():
         </style>
     </head>
     <body>
+        {navbar}
         <h1>Welcome to the Home Page</h1>
         <p>This is a simple Flask application with SQLite database.</p>
         
@@ -338,6 +352,402 @@ def rate_note(note_id, stars):
         conn.close()
 
     return redirect('/')
+
+
+@app.route('/increment-practice-date/<int:practice_id>/<int:days>', methods=['GET'])
+def increment_practice_date(practice_id, days):
+    """Increment the date of a spaced repetition practice item."""
+    from datetime import timedelta
+
+    conn = get_db_connection()
+    practice = conn.execute('SELECT * FROM spaced_repetition WHERE id = ?',
+                            (practice_id,)).fetchone()
+
+    if practice:
+        current_date = datetime.fromisoformat(
+            practice['date'].replace('Z', '+00:00'))
+        new_date = current_date + timedelta(days=days)
+        conn.execute('UPDATE spaced_repetition SET date = ? WHERE id = ?',
+                     (new_date.isoformat(), practice_id))
+        conn.commit()
+
+    conn.close()
+    return redirect('/practice')
+
+
+@app.route('/practice', methods=['GET', 'POST'])
+def practice():
+    """Display all spaced repetition practice items."""
+    if request.method == 'POST':
+        subject = request.form.get('subject')
+        topic = request.form.get('topic')
+        question = request.form.get('question')
+        answer = request.form.get('answer')
+        if subject and topic and question and answer:
+            conn = get_db_connection()
+            conn.execute(
+                'INSERT INTO spaced_repetition (subject, topic, question, answer) VALUES (?, ?, ?, ?)',
+                (subject, topic, question, answer)
+            )
+            conn.commit()
+            conn.close()
+        return redirect('/practice')
+
+    # Pagination settings
+    page = request.args.get('page', 1, type=int)
+    items_per_page = 1
+    offset = (page - 1) * items_per_page
+
+    # Filter settings
+    filter_subject = request.args.get('subject', '', type=str)
+    filter_topic = request.args.get('topic', '', type=str)
+    filter_date = request.args.get('date', '', type=str)
+    filter_type = request.args.get('filter', 'all', type=str)
+
+    conn = get_db_connection()
+
+    # Build query based on filters
+    query = 'SELECT * FROM spaced_repetition'
+    query_count = 'SELECT COUNT(*) as count FROM spaced_repetition'
+    conditions = []
+
+    if filter_subject:
+        conditions.append(f' subject = "{filter_subject}"')
+    if filter_topic:
+        conditions.append(f' topic = "{filter_topic}"')
+
+    if filter_type == 'before' and filter_date:
+        conditions.append(f' date < "{filter_date}"')
+    elif filter_type == 'after' and filter_date:
+        conditions.append(f' date > "{filter_date}"')
+    elif filter_type == 'on' and filter_date:
+        conditions.append(f' date LIKE "{filter_date}%"')
+
+    if conditions:
+        where_clause = ' WHERE' + ' AND'.join(conditions)
+        query += where_clause
+        query_count += where_clause
+
+    # Get total count of filtered practices
+    total_practices = conn.execute(query_count).fetchone()['count']
+
+    # Get all filtered practices
+    query += ' ORDER BY date DESC'
+    all_practices = conn.execute(query).fetchall()
+
+    # Add dummy data if table is empty
+    if len(all_practices) == 0 and not filter_subject and not filter_topic and not filter_date:
+        dummy_data = [
+            ('Mathematics', 'Algebra', 'What is the solution to 2x + 5 = 13?',
+             'x = 4', datetime.now().isoformat()),
+            ('Science', 'Physics', 'What is Newtons second law of motion?',
+             'F = ma (Force equals mass times acceleration)', datetime.now().isoformat()),
+            ('History', 'World War II', 'In what year did World War II end?',
+             '1945', datetime.now().isoformat()),
+            ('Biology', 'Cells', 'What is the powerhouse of the cell?',
+             'Mitochondria', datetime.now().isoformat()),
+            ('Chemistry', 'Periodic Table', 'What is the chemical symbol for Gold?',
+             'Au', datetime.now().isoformat()),
+        ]
+        for subject, topic, question, answer, date in dummy_data:
+            conn.execute(
+                'INSERT INTO spaced_repetition (subject, topic, question, answer, date) VALUES (?, ?, ?, ?, ?)',
+                (subject, topic, question, answer, date)
+            )
+        conn.commit()
+        all_practices = conn.execute(query).fetchall()
+        total_practices = len(all_practices)
+
+    # Get paginated items
+    practices = all_practices[offset:offset + items_per_page]
+
+    # Calculate total pages
+    total_pages = (total_practices + items_per_page - 1) // items_per_page
+
+    # Get unique subjects and topics for filter dropdowns
+    all_subjects = conn.execute(
+        'SELECT DISTINCT subject FROM spaced_repetition ORDER BY subject').fetchall()
+    all_topics = conn.execute(
+        'SELECT DISTINCT topic FROM spaced_repetition ORDER BY topic').fetchall()
+
+    conn.close()
+
+    navbar = '''
+        <nav style="background-color: #333; padding: 0; margin: 0; position: sticky; top: 0; z-index: 1000;">
+            <ul style="list-style: none; margin: 0; padding: 0; display: flex;">
+                <li style="margin: 0;"><a href="/" style="display: block; padding: 15px 20px; color: white; text-decoration: none; background-color: #333; transition: background-color 0.3s;">Home</a></li>
+                <li style="margin: 0;"><a href="/practice" style="display: block; padding: 15px 20px; color: white; text-decoration: none; background-color: #333; transition: background-color 0.3s;">Spaced Repetition</a></li>
+            </ul>
+        </nav>
+    '''
+
+    practices_html = ''
+    if practices:
+        for practice in practices:
+            formatted_date = format_date(practice["date"])
+            date_buttons = '<div style="display: flex; gap: 5px; flex-wrap: wrap;">'
+            for days in [1, 3, 7, 14, 30]:
+                date_buttons += f'<a href="/increment-practice-date/{practice["id"]}/{days}" style="padding: 3px 8px; background-color: #FF9800; color: white; text-decoration: none; border-radius: 3px; font-size: 12px;">+{days}d</a>'
+            date_buttons += '</div>'
+
+            # Convert answer to markdown
+            answer_html = markdown.markdown(practice["answer"])
+
+            practices_html += f'''
+            <div style="background-color: #f9f9f9; border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <button class="subject-topic-btn" id="subjectTopicBtn-{practice['id']}" onclick="toggleSubjectTopic('{practice['id']}')">Show Subject & Topic</button>
+                    <p><strong>Date:</strong> {formatted_date}</p>
+                </div>
+                
+                <div id="subjectTopic-{practice['id']}" class="subject-topic-hidden" style="margin-bottom: 20px;">
+                    <p><strong>Subject:</strong> {practice["subject"]}</p>
+                    <p><strong>Topic:</strong> {practice["topic"]}</p>
+                </div>
+                
+                <div style="margin-bottom: 20px;">
+                    <p><strong>Question:</strong></p>
+                    <p style="background-color: white; padding: 10px; border-radius: 4px; border-left: 4px solid #2196F3;">{practice["question"]}</p>
+                </div>
+                
+                <div style="margin-bottom: 20px;">
+                    <p><strong>Answer:</strong></p>
+                    <button class="answer-btn" id="answerBtn-{practice['id']}" onclick="toggleAnswer('{practice['id']}')">Show Answer</button>
+                    <div id="answer-{practice['id']}" class="answer-hidden" style="background-color: white; padding: 10px; border-radius: 4px; border-left: 4px solid #4CAF50;">{answer_html}</div>
+                </div>
+                
+                <div style="margin-top: 20px;">
+                    <p><strong>Change Date:</strong></p>
+                    {date_buttons}
+                </div>
+            </div>
+            '''
+    else:
+        practices_html = '<p>No practice items yet.</p>'
+
+    return f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Spaced Repetition Practice</title>
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                max-width: 900px;
+                margin: 0 auto;
+                padding: 20px;
+            }}
+            nav ul li a:hover {{
+                background-color: #555 !important;
+            }}
+            h1 {{
+                color: #333;
+            }}
+            h2 {{
+                color: #333;
+                border-bottom: 2px solid #2196F3;
+                padding-bottom: 10px;
+            }}
+            form input, form textarea {{
+                padding: 10px;
+                margin: 5px 0;
+                font-size: 14px;
+                width: 100%;
+                box-sizing: border-box;
+            }}
+            form button {{
+                padding: 10px 20px;
+                font-size: 16px;
+                cursor: pointer;
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                margin-top: 10px;
+            }}
+            form button:hover {{
+                background-color: #0b7dda;
+            }}
+            form {{
+                background-color: #f9f9f9;
+                padding: 20px;
+                border-radius: 4px;
+                margin-bottom: 20px;
+            }}
+            .form-group {{
+                margin-bottom: 15px;
+            }}
+            .form-group label {{
+                display: block;
+                font-weight: bold;
+                margin-bottom: 5px;
+            }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 20px;
+            }}
+            table th, table td {{
+                border: 1px solid #ddd;
+                padding: 12px;
+                text-align: left;
+            }}
+            table th {{
+                background-color: #2196F3;
+                color: white;
+            }}
+            table tr:nth-child(even) {{
+                background-color: #f2f2f2;
+            }}
+            #addPracticeBtn {{
+                padding: 10px 20px;
+                font-size: 16px;
+                cursor: pointer;
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                margin-top: 10px;
+                margin-bottom: 20px;
+            }}
+            #addPracticeBtn:hover {{
+                background-color: #45a049;
+            }}
+            #practiceForm {{
+                display: none;
+            }}
+            #practiceForm.show {{
+                display: block;
+            }}
+            .answer-hidden {{
+                display: none;
+            }}
+            .answer-btn {{
+                padding: 8px 16px;
+                font-size: 14px;
+                cursor: pointer;
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                margin-bottom: 10px;
+            }}
+            .answer-btn:hover {{
+                background-color: #45a049;
+            }}
+            .subject-topic-hidden {{
+                display: none;
+            }}
+            .subject-topic-btn {{
+                padding: 8px 16px;
+                font-size: 14px;
+                cursor: pointer;
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                margin-bottom: 10px;
+            }}
+            .subject-topic-btn:hover {{
+                background-color: #0b7dda;
+            }}
+        </style>
+        <script>
+            function toggleSubjectTopic(practiceId) {{
+                const subjectTopicDiv = document.getElementById('subjectTopic-' + practiceId);
+                const btn = document.getElementById('subjectTopicBtn-' + practiceId);
+                subjectTopicDiv.classList.toggle('subject-topic-hidden');
+                btn.textContent = subjectTopicDiv.classList.contains('subject-topic-hidden') ? 'Show Subject & Topic' : 'Hide Subject & Topic';
+            }}
+            
+            function toggleAnswer(practiceId) {{
+                const answerDiv = document.getElementById('answer-' + practiceId);
+                const btn = document.getElementById('answerBtn-' + practiceId);
+                answerDiv.classList.toggle('answer-hidden');
+                btn.textContent = answerDiv.classList.contains('answer-hidden') ? 'Show Answer' : 'Hide Answer';
+            }}
+            
+            function togglePracticeForm() {{
+                const form = document.getElementById('practiceForm');
+                const btn = document.getElementById('addPracticeBtn');
+                form.classList.toggle('show');
+                btn.textContent = form.classList.contains('show') ? 'Hide Form' : 'Add New Practice Item';
+            }}
+        </script>
+    </head>
+    <body>
+        {navbar}
+        <h1>Spaced Repetition Practice</h1>
+        <p>Practice and reinforce your learning with spaced repetition.</p>
+        
+        <h2>Filter Questions</h2>
+        <form method="get" style="margin-bottom: 20px; padding: 15px; background-color: #f9f9f9; border-radius: 4px;">
+            <label for="subject" style="margin-right: 10px; font-weight: bold;">Subject:</label>
+            <select name="subject" id="subject" style="padding: 8px; margin-right: 20px;">
+                <option value="">All Subjects</option>
+                {'\n'.join([f'<option value="{subject["subject"]}" {"selected" if filter_subject == subject["subject"] else ""}>{subject["subject"]}</option>' for subject in all_subjects])}
+            </select>
+            
+            <label for="topic" style="margin-right: 10px; font-weight: bold;">Topic:</label>
+            <select name="topic" id="topic" style="padding: 8px; margin-right: 20px;">
+                <option value="">All Topics</option>
+                {'\n'.join([f'<option value="{topic["topic"]}" {"selected" if filter_topic == topic["topic"] else ""}>{topic["topic"]}</option>' for topic in all_topics])}
+            </select>
+            
+            <label for="filter" style="margin-right: 10px; font-weight: bold;">Filter Type:</label>
+            <select name="filter" id="filter" style="padding: 8px; margin-right: 20px;">
+                <option value="all" {"selected" if filter_type == "all" else ""}>All Dates</option>
+                <option value="before" {"selected" if filter_type == "before" else ""}>Before Date</option>
+                <option value="after" {"selected" if filter_type == "after" else ""}>After Date</option>
+                <option value="on" {"selected" if filter_type == "on" else ""}>On Date</option>
+            </select>
+            
+            <label for="date" style="margin-right: 10px; font-weight: bold;">Date:</label>
+            <input type="date" name="date" id="date" value="{filter_date}" style="padding: 8px; margin-right: 20px;">
+            
+            <button type="submit" style="padding: 8px 16px; background-color: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer;">Filter</button>
+            <a href="/practice" style="padding: 8px 16px; background-color: #999; color: white; text-decoration: none; border-radius: 4px; display: inline-block; margin-left: 10px;">Clear Filter</a>
+        </form>
+        
+        <button id="addPracticeBtn" onclick="togglePracticeForm()">Add New Practice Item</button>
+        
+        <form id="practiceForm" method="post">
+            <div class="form-group">
+                <label for="subject">Subject:</label>
+                <input type="text" name="subject" id="subject" placeholder="e.g., Mathematics, Biology" required>
+            </div>
+            <div class="form-group">
+                <label for="topic">Topic:</label>
+                <input type="text" name="topic" id="topic" placeholder="e.g., Algebra, Cells" required>
+            </div>
+            <div class="form-group">
+                <label for="question">Question:</label>
+                <textarea name="question" id="question" placeholder="Enter your question here..." required></textarea>
+            </div>
+            <div class="form-group">
+                <label for="answer">Answer:</label>
+                <textarea name="answer" id="answer" placeholder="Enter the answer here..." required></textarea>
+            </div>
+            <button type="submit">Add Practice Item</button>
+        </form>
+        
+        <h2>Practice Items:</h2>
+        {practices_html}
+        
+        <!-- Pagination Controls -->
+        <div style="margin-top: 20px; text-align: center;">
+            <p>Page {page} of {total_pages} (Total: {total_practices} items)</p>
+            <div>
+                {f'<a href="/practice?page=1" style="margin: 0 5px;">First</a>' if page > 1 else ''}
+                {f'<a href="/practice?page={page-1}" style="margin: 0 5px;">Previous</a>' if page > 1 else ''}
+                <span style="margin: 0 10px;">Page {page}</span>
+                {f'<a href="/practice?page={page+1}" style="margin: 0 5px;">Next</a>' if page < total_pages else ''}
+                {f'<a href="/practice?page={total_pages}" style="margin: 0 5px;">Last</a>' if page < total_pages else ''}
+            </div>
+        </div>
+    </body>
+    </html>
+    '''
 
 
 if __name__ == '__main__':

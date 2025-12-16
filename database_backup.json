@@ -1,0 +1,59 @@
+{
+  "items": [],
+  "notes": [
+    {
+      "id": 2,
+      "text": "https://www.designgurus.io/course-play/grokking-the-coding-interview/doc/fruits-into-baskets-medium\r\n",
+      "date": "2025-12-20T18:54:54",
+      "stars": 2
+    },
+    {
+      "id": 3,
+      "text": "https://www.designgurus.io/course-play/grokking-the-coding-interview/doc/longest-substring-with-same-letters-after-replacement-hard \\nWhy do I not need to update the maximum frequency character after reducing window size? \\n The approach of calculating for every window size is correct as it has been AC \\n However a haphazard combination of that approach with the universal approach of max_letter_count would give a wrong answer",
+      "date": "2025-12-20T18:55:08",
+      "stars": 5
+    },
+    {
+      "id": 4,
+      "text": "https://www.designgurus.io/course-play/grokking-the-coding-interview/doc/longest-substring-with-k-distinct-characters-medium",
+      "date": "2025-12-20T18:55:22",
+      "stars": 2
+    },
+    {
+      "id": 5,
+      "text": "https://leetcode.com/problems/longest-nice-substring/description/",
+      "date": "2025-12-18T13:26:00",
+      "stars": 4
+    },
+    {
+      "id": 6,
+      "text": "https://leetcode.com/problems/substrings-of-size-three-with-distinct-characters/description/",
+      "date": "2025-12-18T13:26:09",
+      "stars": 2
+    },
+    {
+      "id": 7,
+      "text": "https://www.designgurus.io/course-play/grokking-the-coding-interview/doc/longest-subarray-with-ones-after-replacement-hard",
+      "date": "2025-12-18T16:24:32",
+      "stars": 4
+    },
+    {
+      "id": 8,
+      "text": "https://www.designgurus.io/course-play/grokking-the-coding-interview/doc/problem-challenge-1-permutation-in-a-string-hard",
+      "date": "2025-12-16T18:04:55",
+      "stars": 0
+    },
+    {
+      "id": 9,
+      "text": "https://www.designgurus.io/course-play/grokking-the-coding-interview/doc/problem-challenge-2string-anagrams-hard",
+      "date": "2025-12-16T18:20:06",
+      "stars": 0
+    },
+    {
+      "id": 10,
+      "text": "https://www.designgurus.io/course-play/grokking-the-coding-interview/doc/problem-challenge-3-smallest-window-containing-substring-hard",
+      "date": "2025-12-16T19:19:32",
+      "stars": 0
+    }
+  ]
+}
