@@ -1,4 +1,4 @@
-from flask import Flask, request, redirect
+from flask import Flask, request, redirect, jsonify
 from database import init_db, get_db_connection
 from datetime import datetime
 import markdown
@@ -44,6 +44,8 @@ def home():
     filter_type = request.args.get('filter', 'all', type=str)
     filter_date = request.args.get('date', '', type=str)
     sort_order = request.args.get('sort', 'asc', type=str)
+    # Search term for notes (used in template only)
+    filter_q = request.args.get('q', '', type=str)
 
     conn = get_db_connection()
     items = conn.execute('SELECT * FROM items').fetchall()
@@ -222,6 +224,8 @@ def home():
                 <option value="asc" {"selected" if sort_order == "asc" else ""}>Oldest First (Ascending)</option>
                 <option value="desc" {"selected" if sort_order == "desc" else ""}>Newest First (Descending)</option>
             </select>
+            <label for="q" style="margin-right: 10px; font-weight: bold;">Search:</label>
+            <input type="text" name="q" id="q" value="{filter_q}" placeholder="Search question or answer" style="padding: 8px; margin-right: 20px;">
             <button type="submit" style="padding: 8px 16px; background-color: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer;">Filter</button>
             <a href="/" style="padding: 8px 16px; background-color: #999; color: white; text-decoration: none; border-radius: 4px; display: inline-block; margin-left: 10px;">Clear Filter</a>
         </form>
@@ -536,42 +540,61 @@ def practice():
     filter_date = request.args.get('date', '', type=str)
     filter_type = request.args.get('filter', 'all', type=str)
     filter_stars = request.args.get('stars', '', type=str)
+    # Full-text search over question/answer
+    filter_q = request.args.get('q', '', type=str)
 
     conn = get_db_connection()
 
-    # Build query based on filters
+    # Build parameterized query based on filters (safer)
     query = 'SELECT * FROM spaced_repetition'
     query_count = 'SELECT COUNT(*) as count FROM spaced_repetition'
     conditions = []
+    params = []
 
     if filter_subject:
-        conditions.append(f' subject = "{filter_subject}"')
+        conditions.append('subject = ?')
+        params.append(filter_subject)
     if filter_topic:
-        conditions.append(f' topic = "{filter_topic}"')
+        conditions.append('topic = ?')
+        params.append(filter_topic)
     if filter_stars:
-        conditions.append(f' stars = {filter_stars}')
+        # store as int if provided
+        try:
+            params.append(int(filter_stars))
+            conditions.append('stars = ?')
+        except ValueError:
+            pass
 
     if filter_type == 'before' and filter_date:
-        conditions.append(f' date < "{filter_date}"')
+        conditions.append('date < ?')
+        params.append(filter_date)
     elif filter_type == 'after' and filter_date:
-        conditions.append(f' date > "{filter_date}"')
+        conditions.append('date > ?')
+        params.append(filter_date)
     elif filter_type == 'on' and filter_date:
-        conditions.append(f' date LIKE "{filter_date}%"')
+        conditions.append('date LIKE ?')
+        params.append(f'{filter_date}%')
+
+    # Full-text like search on question and answer
+    if filter_q:
+        conditions.append('(question LIKE ? OR answer LIKE ?)')
+        like_q = f'%{filter_q}%'
+        params.extend([like_q, like_q])
 
     if conditions:
-        where_clause = ' WHERE' + ' AND'.join(conditions)
+        where_clause = ' WHERE ' + ' AND '.join(conditions)
         query += where_clause
         query_count += where_clause
 
     # Get total count of filtered practices
-    total_practices = conn.execute(query_count).fetchone()['count']
+    total_practices = conn.execute(query_count, params).fetchone()['count']
 
     # Get all filtered practices
     query += ' ORDER BY date ASC, stars ASC'
-    all_practices = conn.execute(query).fetchall()
+    all_practices = conn.execute(query, params).fetchall()
 
-    # Add dummy data if table is empty
-    if len(all_practices) == 0 and not filter_subject and not filter_topic and not filter_date:
+    # Add dummy data if table is empty and no filters/search are applied
+    if len(all_practices) == 0 and not filter_subject and not filter_topic and not filter_date and not filter_q:
         dummy_data = [
             ('Mathematics', 'Algebra', 'What is the solution to 2x + 5 = 13?',
              'x = 4', datetime.now().isoformat()),
@@ -590,7 +613,9 @@ def practice():
                 (subject, topic, question, answer, date)
             )
         conn.commit()
-        all_practices = conn.execute(query).fetchall()
+        # re-run unfiltered query to get all practices (no params)
+        all_practices = conn.execute(
+            'SELECT * FROM spaced_repetition ORDER BY date ASC, stars ASC').fetchall()
         total_practices = len(all_practices)
 
     # Get paginated items
@@ -606,6 +631,22 @@ def practice():
         'SELECT DISTINCT topic FROM spaced_repetition ORDER BY topic').fetchall()
 
     conn.close()
+
+    # Build a preserved query string for pagination links to keep filters/search
+    params_parts = []
+    if filter_subject:
+        params_parts.append(f'subject={filter_subject}')
+    if filter_topic:
+        params_parts.append(f'topic={filter_topic}')
+    if filter_type and filter_type != 'all':
+        params_parts.append(f'filter={filter_type}')
+    if filter_date:
+        params_parts.append(f'date={filter_date}')
+    if filter_stars:
+        params_parts.append(f'stars={filter_stars}')
+    if filter_q:
+        params_parts.append(f'q={filter_q}')
+    params_query = '&'.join(params_parts)
 
     navbar = '''
         <nav style="background-color: #333; padding: 0; margin: 0; position: sticky; top: 0; z-index: 1000;">
@@ -901,6 +942,8 @@ def practice():
                 <option value="5" {"selected" if filter_stars == "5" else ""}>⭐⭐⭐⭐⭐ (5)</option>
             </select>
             
+            <label for="q" style="margin-right: 10px; font-weight: bold;">Search:</label>
+            <input type="text" name="q" id="q" value="{filter_q}" placeholder="Search question or answer" style="padding: 8px; margin-right: 20px;">
             <button type="submit" style="padding: 8px 16px; background-color: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer;">Filter</button>
             <a href="/practice" style="padding: 8px 16px; background-color: #999; color: white; text-decoration: none; border-radius: 4px; display: inline-block; margin-left: 10px;">Clear Filter</a>
         </form>
@@ -934,11 +977,11 @@ def practice():
         <div style="margin-top: 20px; text-align: center;">
             <p>Page {page} of {total_pages} (Total: {total_practices} items)</p>
             <div>
-                {f'<a href="/practice?page=1" style="margin: 0 5px;">First</a>' if page > 1 else ''}
-                {f'<a href="/practice?page={page-1}" style="margin: 0 5px;">Previous</a>' if page > 1 else ''}
+                {f'<a href="/practice?page=1{("&" + params_query) if params_query else ""}" style="margin: 0 5px;">First</a>' if page > 1 else ''}
+                {f'<a href="/practice?page={page-1}{("&" + params_query) if params_query else ""}" style="margin: 0 5px;">Previous</a>' if page > 1 else ''}
                 <span style="margin: 0 10px;">Page {page}</span>
-                {f'<a href="/practice?page={page+1}" style="margin: 0 5px;">Next</a>' if page < total_pages else ''}
-                {f'<a href="/practice?page={total_pages}" style="margin: 0 5px;">Last</a>' if page < total_pages else ''}
+                {f'<a href="/practice?page={page+1}{("&" + params_query) if params_query else ""}" style="margin: 0 5px;">Next</a>' if page < total_pages else ''}
+                {f'<a href="/practice?page={total_pages}{("&" + params_query) if params_query else ""}" style="margin: 0 5px;">Last</a>' if page < total_pages else ''}
             </div>
         </div>
     </body>
@@ -948,3 +991,20 @@ def practice():
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+
+@app.route('/search-practice', methods=['GET'])
+def search_practice():
+    """Return JSON list of practices matching question or answer text."""
+    q = request.args.get('q', '', type=str)
+    conn = get_db_connection()
+    results = []
+    if q:
+        like_q = f'%{q}%'
+        rows = conn.execute(
+            'SELECT * FROM spaced_repetition WHERE question LIKE ? OR answer LIKE ? ORDER BY date ASC, stars ASC',
+            (like_q, like_q)
+        ).fetchall()
+        results = [dict(r) for r in rows]
+    conn.close()
+    return jsonify(results)
